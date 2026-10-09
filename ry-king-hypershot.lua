@@ -29,7 +29,7 @@ _G.RENXX = true
 
 task.wait(0.3)
 print("==============================")
-print("  RENXX v3.9 | HYPERshot")
+print("  RENXX v4.0 | HYPERshot")
 print("==============================")
 print("  Loading...")
 print("==============================")
@@ -320,7 +320,7 @@ task.spawn(function()
     task.wait(3)
     if not _G.RENXX then return end
     weaponCache = findWeaponTables()
-    print("[RENXX v3.9] " .. #weaponCache .. " weapon tables found")
+    print("[RENXX v4.0] " .. #weaponCache .. " weapon tables found")
     while _G.RENXX do
         task.wait(Config.ScanInterval)
         if not _G.RENXX then break end
@@ -814,7 +814,7 @@ end
 
 -- ==================== WINDOW ====================
 local Window = Rayfield:CreateWindow({
-    Name = "RENXX v3.9 | HYPERshot",
+    Name = "RENXX v4.0 | HYPERshot",
     LoadingTitle = "Loading RENXX...",
     LoadingSubtitle = "By DEEP & RENXX",
     ConfigurationSaving = { Enabled = false },
@@ -1728,7 +1728,7 @@ Rayfield:Notify({
 task.spawn(function()
     task.wait(3.5)
     print("==============================")
-    print("  RENXX v4.0| HYPERSHOT")
+    print("  RENXX v4.0 | HYPERSHOT")
     print("==============================")
     print("  Status  : LOADED")
     print("  Tab     : 6")
