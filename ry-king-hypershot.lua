@@ -1,5 +1,5 @@
 -- =======================================
--- RENXX v4.0 | HYPERshot EDITION
+-- RENXX v4.0 | HYPERSHOT EDITION
 -- By: DEEP & RENXX
 -- 6 Tab | All Critical Bug Fixed | Production Ready
 -- =======================================
@@ -29,7 +29,7 @@ _G.RENXX = true
 
 task.wait(0.3)
 print("==============================")
-print("  RENXX v4.0 | HYPERshot")
+print("  RENXX v4.0 | HYPERSHOT")
 print("==============================")
 print("  Loading...")
 print("==============================")
@@ -1719,7 +1719,7 @@ end))
 
 -- ==================== NOTIF ====================
 Rayfield:Notify({
-    Title = "RENXX v4.0 | HYPERshot",
+    Title = "RENXX v4.0 | HYPERHOT",
     Content = "6 Tab | All Critical Bug Fixed | Production Ready",
     Duration = 6,
 })
