@@ -1,0 +1,602 @@
+-- =====================================================
+--  RENXX HUB v10.0 | THE ULTIMATE FIX
+--  UI: Rayfield | Made by: Ren & Deep
+-- =====================================================
+
+local StarterGui = game:GetService("StarterGui")
+local function DebugMsg(msg, color)
+    pcall(function()
+        StarterGui:SetCore("ChatMakeSystemMessage", {
+            Text = "[RENXX] " .. tostring(msg),
+            Color = color or Color3.fromRGB(100, 255, 150),
+            Font = Enum.Font.SourceSansBold,
+            TextSize = 18
+        })
+    end)
+end
+local function DebugOK(msg) DebugMsg(msg, Color3.fromRGB(100, 255, 150)) end
+local function DebugWarn(msg) DebugMsg(msg, Color3.fromRGB(255, 200, 100)) end
+
+DebugOK("Loading RENXX v10.0...")
+
+local successRay, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
+if not successRay or not Rayfield then return end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- =====================================================
+-- SETTINGS
+-- =====================================================
+getgenv().RENXX = getgenv().RENXX or {}
+getgenv().RENXX.S = {
+    -- Visual
+    ESPPlayerEnemy = true, ColorPlayerEnemy = Color3.fromRGB(255, 50, 50),
+    ESPPlayerTeam = false, ColorPlayerTeam = Color3.fromRGB(50, 255, 50),
+    ESPBotEnemy = true, ColorBotEnemy = Color3.fromRGB(255, 165, 0),
+    ESPBotTeam = false, ColorBotTeam = Color3.fromRGB(0, 255, 255),
+    ESPName = true, ColorName = Color3.fromRGB(255, 255, 255),
+    ESPHealth = true, ColorHealth = Color3.fromRGB(0, 255, 0),
+    
+    -- Combat
+    Aimbot = false, AimSmooth = 3, AimTarget = "All", AimPart = "Head",
+    ShowPOV = true, POVRadius = 150, POVColor = Color3.fromRGB(255, 0, 0),
+    SnapLine = true, SnapLineColor = Color3.fromRGB(255, 50, 50),
+    TeamCheck = true, WallCheck = true,
+    Hitbox = false, HitboxSize = 5,
+    
+    -- Player
+    SpeedHack = false, SpeedValue = 32,
+    JumpHack = false, JumpValue = 50,
+    InfJump = false, NoClip = false,
+    
+    -- Farm
+    KillAllEnabled = false, KillAllDelay = 0.04, KillAllTargetPart = "Head",
+    BringEnemy = false, BringType = "SingleEnemy", BringTarget = "All", BringStuds = 5
+}
+local S = getgenv().RENXX.S
+
+-- =====================================================
+-- CORE REFERENCES
+-- =====================================================
+local DeagleController = nil
+local DeagleShared = nil
+
+pcall(function()
+    local PS = LocalPlayer:WaitForChild("PlayerScripts", 10)
+    if PS then
+        local ML = PS:WaitForChild("ModuleLoader", 10)
+        if ML then
+            DeagleController = require(ML:WaitForChild("DeagleController", 10))
+        end
+    end
+end)
+
+pcall(function()
+    local Mods = ReplicatedStorage:WaitForChild("Modules", 10)
+    if Mods then
+        local Shared = Mods:WaitForChild("Shared", 10)
+        if Shared then
+            DeagleShared = require(Shared:WaitForChild("DeagleShared", 10))
+        end
+    end
+end)
+
+-- =====================================================
+-- HELPERS
+-- =====================================================
+local function IsAlive(char)
+    if not char or not char.Parent then return false end
+    local h = char:FindFirstChildOfClass("Humanoid")
+    return h and h.Health > 0
+end
+
+local function IsTeammate(char)
+    if not S.TeamCheck then return false end
+    local myChar = LocalPlayer.Character
+    if not myChar then return false end
+    local mt = myChar:GetAttribute("GamemodeTeam")
+    local tt = char:GetAttribute("GamemodeTeam")
+    return mt and tt and (mt == tt)
+end
+
+local function GetTargetPart(char, partName)
+    if partName == "Head" then return char:FindFirstChild("Head") end
+    if partName == "Body" then return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart") end
+    if partName == "Foot" then return char:FindFirstChild("LeftFoot") or char:FindFirstChild("RightFoot") or char:FindFirstChild("LeftLeg") or char:FindFirstChild("RightLeg") end
+    return char:FindFirstChild("Head")
+end
+
+local function GetPredictedPosition(part)
+    local char = part.Parent
+    local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+    if root then
+        return part.Position + (root.AssemblyLinearVelocity * ((LocalPlayer:GetNetworkPing() or 0.03) * 1.85))
+    end
+    return part.Position
+end
+
+local function GetTargets(targetType)
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and IsAlive(p.Character) then
+            if targetType == "All" or targetType == "PlayerEnemy" or targetType == "PlayerOnly" then
+                if not IsTeammate(p.Character) then table.insert(list, p.Character) end
+            end
+        end
+    end
+    for _, m in ipairs(workspace:GetChildren()) do
+        if m:IsA("Model") and m:GetAttribute("IsBot") == true and IsAlive(m) then
+            if targetType == "All" or targetType == "BotEnemy" or targetType == "BotOnly" then
+                table.insert(list, m)
+            end
+        end
+    end
+    return list
+end
+
+-- =====================================================
+-- KILL ALL LOGIC (PERSIS DARI FILE LU)
+-- =====================================================
+_G.KillAllSettings = {
+    FireRateDelay = 0.04, 
+    TargetPart = "Head", 
+    PanicHealthThreshold = 40
+}
+
+local CurrentShotTargets = {}
+
+local function IsAliveAndValid(model)
+    if not model or not model:IsA("Model") or model == LocalPlayer.Character then return false end
+    local hum = model:FindFirstChildWhichIsA("Humanoid")
+    if not hum or hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead then return false end
+    
+    local rootPart = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso") or model:FindFirstChild("UpperTorso")
+    if not rootPart then return false end
+    
+    if model:FindFirstChild("Dead") or model:GetAttribute("IsDead") == true then return false end
+    
+    -- Cek Tim
+    local localCharacter = LocalPlayer.Character
+    local localTeam = localCharacter and localCharacter:GetAttribute("GamemodeTeam")
+    local targetTeam = model:GetAttribute("GamemodeTeam")
+    if localTeam ~= nil and targetTeam ~= nil and localTeam == targetTeam then
+        return false
+    end
+    return true
+end
+
+local function GetAllPotentialTargets()
+    local targets = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and IsAliveAndValid(player.Character) then
+            table.insert(targets, player.Character)
+        end
+    end
+    local queue = {workspace}
+    while #queue > 0 do
+        local current = table.remove(queue, 1)
+        for _, child in ipairs(current:GetChildren()) do
+            if child:IsA("Model") and IsAliveAndValid(child) then
+                if not table.find(targets, child) then
+                    local p = Players:GetPlayerFromCharacter(child)
+                    if not p then table.insert(targets, child) end
+                end
+            elseif child:IsA("Folder") or child.Name:lower():find("bot") or child.Name:lower():find("npc") then
+                table.insert(queue, child)
+            end
+        end
+    end
+    return targets
+end
+
+local function IsTargetVisible(targetPart, myRootPart)
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, targetPart.Parent}
+    raycastParams.IgnoreWater = true
+    local result = workspace:Raycast(myRootPart.Position, targetPart.Position - myRootPart.Position, raycastParams)
+    return result == nil 
+end
+
+local function ExecuteAutomatedSweep()
+    if not S.KillAllEnabled then return end
+    local myChar = LocalPlayer.Character
+    local myRoot = myChar and (myChar:FindFirstChild("HumanoidRootPart") or myChar:FindFirstChild("Torso"))
+    local myHum = myChar and myChar:FindFirstChildWhichIsA("Humanoid")
+    if not myChar or not myRoot or not myHum or not DeagleController then return end
+    
+    local isVulnerable = (myHum.Health / myHum.MaxHealth * 100) <= _G.KillAllSettings.PanicHealthThreshold
+    
+    if typeof(DeagleController) == "table" then
+        DeagleController.ShootCooldownUntil = 0
+        DeagleController.CanShoot = true
+        DeagleController.CurrentSpread = 0
+        if DeagleController.WeaponStats then DeagleController.WeaponStats.Spread = 0 end
+    end
+    
+    table.clear(CurrentShotTargets)
+    local activePool = GetAllPotentialTargets()
+    
+    table.sort(activePool, function(a, b)
+        local rootA = a:FindFirstChild("HumanoidRootPart") or a:FindFirstChild("Torso")
+        local rootB = b:FindFirstChild("HumanoidRootPart") or b:FindFirstChild("Torso")
+        if rootA and rootB then
+            return (myRoot.Position - rootA.Position).Magnitude < (myRoot.Position - rootB.Position).Magnitude
+        end
+        return false
+    end)
+    
+    if isVulnerable then
+        local targetFound = false
+        for _, child in ipairs(activePool) do
+            local targetPart = child:FindFirstChild(_G.KillAllSettings.TargetPart) or child:FindFirstChild("Head")
+            if targetPart and IsTargetVisible(targetPart, myRoot) then
+                CurrentShotTargets[targetPart] = true
+                local aimPosition = GetPredictedPosition(targetPart)
+                pcall(function()
+                    if typeof(DeagleController.Shoot) == "function" then DeagleController.Shoot(aimPosition)
+                    elseif typeof(DeagleController.Fire) == "function" then DeagleController.Fire(aimPosition) end
+                end)
+                targetFound = true
+                break
+            end
+        end
+        if not targetFound then
+            for _, child in ipairs(activePool) do
+                local targetPart = child:FindFirstChild(_G.KillAllSettings.TargetPart) or child:FindFirstChild("Head")
+                if targetPart then
+                    CurrentShotTargets[targetPart] = true
+                    local aimPosition = GetPredictedPosition(targetPart)
+                    pcall(function()
+                        if typeof(DeagleController.Shoot) == "function" then DeagleController.Shoot(aimPosition)
+                        elseif typeof(DeagleController.Fire) == "function" then DeagleController.Fire(aimPosition) end
+                    end)
+                    break
+                end
+            end
+        end
+    else
+        for _, child in ipairs(activePool) do
+            local targetPart = child:FindFirstChild(_G.KillAllSettings.TargetPart) or child:FindFirstChild("Head")
+            if targetPart then
+                CurrentShotTargets[targetPart] = true
+                local aimPosition = GetPredictedPosition(targetPart)
+                pcall(function()
+                    if typeof(DeagleController.Shoot) == "function" then DeagleController.Shoot(aimPosition)
+                    elseif typeof(DeagleController.Fire) == "function" then DeagleController.Fire(aimPosition) end
+                end)
+            end
+        end
+    end
+end
+
+if DeagleShared and DeagleShared.Raycast then
+    local oldRaycast = DeagleShared.Raycast
+    DeagleShared.Raycast = function(p1, p2, p3, ...)
+        if S.KillAllEnabled then
+            for targetPart, _ in pairs(CurrentShotTargets) do
+                if targetPart and targetPart.Parent and IsAliveAndValid(targetPart.Parent) then
+                    return {
+                        Instance = targetPart,
+                        Position = GetPredictedPosition(targetPart),
+                        Normal = Vector3.new(0, 1, 0),
+                        Material = Enum.Material.Plastic
+                    }
+                end
+            end
+        end
+        return oldRaycast(p1, p2, p3, ...)
+    end
+end
+
+task.spawn(function()
+    while true do
+        task.wait(_G.KillAllSettings.FireRateDelay)
+        pcall(ExecuteAutomatedSweep)
+    end
+end)
+
+-- =====================================================
+-- AIMBOT & POV & SNAPLINE
+-- =====================================================
+local currentTarget = nil
+task.spawn(function()
+    while task.wait() do
+        if S.Aimbot then
+            local best, bestDist = nil, S.POVRadius
+            local center = Camera.ViewportSize / 2
+            
+            for _, char in ipairs(GetTargets(S.AimTarget)) do
+                local part = GetTargetPart(char, S.AimPart)
+                if part then
+                    local visible = true
+                    if S.WallCheck then
+                        local params = RaycastParams.new()
+                        params.FilterType = Enum.RaycastFilterType.Exclude
+                        params.FilterDescendantsInstances = {LocalPlayer.Character, char}
+                        visible = workspace:Raycast(Camera.CFrame.Position, part.Position - Camera.CFrame.Position, params) == nil
+                    end
+                    
+                    if visible then
+                        local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                        if onScreen and pos.Z > 0 then
+                            local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                            if dist < bestDist then
+                                bestDist = dist
+                                best = part
+                            end
+                        end
+                    end
+                end
+            end
+            
+            currentTarget = best
+            if currentTarget then
+                local targetCFrame = CFrame.new(Camera.CFrame.Position, currentTarget.Position)
+                Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, 1 / S.AimSmooth)
+            end
+        else
+            currentTarget = nil
+        end
+    end
+end)
+
+-- =====================================================
+-- VISUALS (ESP, POV, Snapline)
+-- =====================================================
+local Drawing = Drawing
+local espCache = {}
+local fovCircle, snapLine = nil, nil
+
+if Drawing then
+    fovCircle = Drawing.new("Circle")
+    fovCircle.Thickness = 1 fovCircle.NumSides = 60 fovCircle.Filled = false
+    
+    snapLine = Drawing.new("Line")
+    snapLine.Thickness = 1
+end
+
+task.spawn(function()
+    while task.wait() do
+        -- POV
+        if fovCircle then
+            fovCircle.Position = Camera.ViewportSize / 2
+            fovCircle.Radius = S.POVRadius
+            fovCircle.Color = S.POVColor
+            fovCircle.Visible = S.ShowPOV
+        end
+
+        -- Snapline
+        if snapLine then
+            if S.SnapLine and currentTarget then
+                local pos, onScreen = Camera:WorldToViewportPoint(currentTarget.Position)
+                if onScreen then
+                    snapLine.From = Camera.ViewportSize / 2
+                    snapLine.To = Vector2.new(pos.X, pos.Y)
+                    snapLine.Color = S.SnapLineColor
+                    snapLine.Visible = true
+                else snapLine.Visible = false end
+            else snapLine.Visible = false end
+        end
+
+        -- ESP
+        local active = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character and IsAlive(p.Character) then
+                local char = p.Character
+                local isEnemy = not IsTeammate(char)
+                local showBox = (isEnemy and S.ESPPlayerEnemy) or (not isEnemy and S.ESPPlayerTeam)
+                
+                if showBox or S.ESPName or S.ESPHealth then
+                    active[char] = true
+                    if not espCache[char] then
+                        espCache[char] = {
+                            Box = Drawing.new("Square"),
+                            Name = Drawing.new("Text"),
+                            HealthBg = Drawing.new("Square"),
+                            HealthBar = Drawing.new("Square")
+                        }
+                        espCache[char].Box.Thickness = 1
+                        espCache[char].Box.Filled = false
+                        espCache[char].Name.Size = 14
+                        espCache[char].Name.Center = true
+                        espCache[char].Name.Outline = true
+                    end
+                    
+                    local o = espCache[char]
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                    local head = char:FindFirstChild("Head")
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    
+                    if hrp and head and hum then
+                        local pos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+                        local headPos, headScreen = Camera:WorldToViewportPoint(head.Position)
+                        
+                        if onScreen and headScreen and pos.Z > 0 then
+                            local h = math.abs(headPos.Y - pos.Y)
+                            local w = h * 0.5
+                            local x = pos.X - w / 2
+                            local y = headPos.Y
+                            
+                            if showBox then
+                                o.Box.Visible = true o.Box.Size = Vector2.new(w, h) o.Box.Position = Vector2.new(x, y)
+                                o.Box.Color = isEnemy and S.ColorPlayerEnemy or S.ColorPlayerTeam
+                            else o.Box.Visible = false end
+                            
+                            if S.ESPName then
+                                o.Name.Visible = true o.Name.Text = p.Name o.Name.Position = Vector2.new(pos.X, y - 18) o.Name.Color = S.ColorName
+                            else o.Name.Visible = false end
+                            
+                            if S.ESPHealth then
+                                local pct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                                local bw = 3
+                                local bh = h * pct
+                                local bx = x - bw - 4
+                                o.HealthBg.Visible = true o.HealthBg.Size = Vector2.new(bw, h) o.HealthBg.Position = Vector2.new(bx, y)
+                                o.HealthBar.Visible = true o.HealthBar.Size = Vector2.new(bw, bh) o.HealthBar.Position = Vector2.new(bx, y + (h - bh)) o.HealthBar.Color = S.ColorHealth
+                            else o.HealthBg.Visible = false o.HealthBar.Visible = false end
+                        else
+                            o.Box.Visible = false o.Name.Visible = false o.HealthBg.Visible = false o.HealthBar.Visible = false
+                        end
+                    end
+                end
+            end
+        end
+        
+        for char, o in pairs(espCache) do
+            if not active[char] then
+                pcall(function() o.Box:Remove() end) pcall(function() o.Name:Remove() end)
+                pcall(function() o.HealthBg:Remove() end) pcall(function() o.HealthBar:Remove() end)
+                espCache[char] = nil
+            end
+        end
+    end
+end)
+
+-- =====================================================
+-- HITBOX, PLAYER, BRING
+-- =====================================================
+task.spawn(function()
+    while task.wait(0.2) do
+        -- Hitbox
+        if S.Hitbox then
+            for _, char in ipairs(GetTargets("All")) do
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.Size = Vector3.new(S.HitboxSize, S.HitboxSize, S.HitboxSize)
+                    hrp.Transparency = 0.5 hrp.CanCollide = false
+                end
+            end
+        end
+        
+        -- Movement
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = S.SpeedHack and S.SpeedValue or 16
+                hum.UseJumpPower = true
+                hum.JumpPower = S.JumpHack and S.JumpValue or 50
+            end
+            if S.NoClip then
+                for _, v in pairs(char:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
+            end
+        end
+    end
+end)
+
+UserInputService.JumpRequest:Connect(function()
+    if S.InfJump and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if S.BringEnemy then
+            local myChar = LocalPlayer.Character
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if myRoot then
+                for _, char in ipairs(GetTargets(S.BringTarget)) do
+                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local targetCFrame = myRoot.CFrame * CFrame.new(0, 0, -S.BringStuds)
+                        targetCFrame = CFrame.new(targetCFrame.Position, myRoot.Position)
+                        hrp.CFrame = targetCFrame
+                        if S.BringType == "SingleEnemy" then break end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- =====================================================
+-- UI SETUP (RAYFIELD)
+-- =====================================================
+local Window = Rayfield:CreateWindow({
+    Name = "RENXX Hub v10.0 | Ultimate",
+    LoadingTitle = "RENXX Hub",
+    LoadingSubtitle = "by Ren & Deep",
+    ConfigurationSaving = {Enabled = false},
+    KeySystem = false,
+})
+
+-- 1. VISUAL
+local Visual = Window:CreateTab("Visual", 4483345998)
+Visual:CreateSection("PLAYER ENEMY")
+Visual:CreateToggle({Name = "ESP Box Player Enemy", CurrentValue = true, Flag = "EPE", Callback = function(v) S.ESPPlayerEnemy = v end})
+Visual:CreateColorPicker({Name = "Box Player Enemy Color", Color = Color3.fromRGB(255, 50, 50), Flag = "EPEC", Callback = function(c) S.ColorPlayerEnemy = c end})
+
+Visual:CreateSection("PLAYER TEAM")
+Visual:CreateToggle({Name = "ESP Box Player Team", CurrentValue = false, Flag = "EPT", Callback = function(v) S.ESPPlayerTeam = v end})
+Visual:CreateColorPicker({Name = "Box Player Team Color", Color = Color3.fromRGB(50, 255, 50), Flag = "EPTC", Callback = function(c) S.ColorPlayerTeam = c end})
+
+Visual:CreateSection("BOT ENEMY")
+Visual:CreateToggle({Name = "ESP Box Bot Enemy", CurrentValue = true, Flag = "EBE", Callback = function(v) S.ESPBotEnemy = v end})
+Visual:CreateColorPicker({Name = "Box Bot Enemy Color", Color = Color3.fromRGB(255, 165, 0), Flag = "EBEC", Callback = function(c) S.ColorBotEnemy = c end})
+
+Visual:CreateSection("BOT TEAM")
+Visual:CreateToggle({Name = "ESP Box Bot Team", CurrentValue = false, Flag = "EBT", Callback = function(v) S.ESPBotTeam = v end})
+Visual:CreateColorPicker({Name = "Box Bot Team Color", Color = Color3.fromRGB(0, 255, 255), Flag = "EBTC", Callback = function(c) S.ColorBotTeam = c end})
+
+Visual:CreateSection("GLOBAL ESP")
+Visual:CreateToggle({Name = "ESP Name", CurrentValue = true, Flag = "EN", Callback = function(v) S.ESPName = v end})
+Visual:CreateColorPicker({Name = "ESP Name Color", Color = Color3.fromRGB(255, 255, 255), Flag = "ENC", Callback = function(c) S.ColorName = c end})
+Visual:CreateToggle({Name = "ESP Health Bar", CurrentValue = true, Flag = "EH", Callback = function(v) S.ESPHealth = v end})
+Visual:CreateColorPicker({Name = "ESP Health Bar Color", Color = Color3.fromRGB(0, 255, 0), Flag = "EHC", Callback = function(c) S.ColorHealth = c end})
+
+-- 2. COMBAT
+local Combat = Window:CreateTab("Combat", 4483345998)
+Combat:CreateSection("AIMBOT")
+Combat:CreateToggle({Name = "Aimbot (Camera Lock)", CurrentValue = false, Flag = "AB", Callback = function(v) S.Aimbot = v end})
+Combat:CreateSlider({Name = "Aim Smoothness", Range = {1, 20}, Increment = 1, CurrentValue = 3, Flag = "ABS", Callback = function(v) S.AimSmooth = v end})
+Combat:CreateDropdown({Name = "Aim Target", Options = {"All", "PlayerOnly", "BotOnly"}, CurrentOption = "All", Flag = "ABT", Callback = function(v) S.AimTarget = v end})
+Combat:CreateDropdown({Name = "Aim Part", Options = {"Head", "Body", "Foot"}, CurrentOption = "Head", Flag = "ABP", Callback = function(v) S.AimPart = v end})
+
+Combat:CreateSection("POV & SNAPLINE")
+Combat:CreateToggle({Name = "Show POV Circle", CurrentValue = true, Flag = "SPOV", Callback = function(v) S.ShowPOV = v end})
+Combat:CreateSlider({Name = "POV Radius", Range = {10, 400}, Increment = 1, CurrentValue = 150, Flag = "POVR", Callback = function(v) S.POVRadius = v end})
+Combat:CreateColorPicker({Name = "POV Color", Color = Color3.fromRGB(255, 0, 0), Flag = "POVC", Callback = function(c) S.POVColor = c end})
+Combat:CreateToggle({Name = "SnapLine (Crosshair to Enemy)", CurrentValue = true, Flag = "SL", Callback = function(v) S.SnapLine = v end})
+Combat:CreateColorPicker({Name = "SnapLine Color", Color = Color3.fromRGB(255, 50, 50), Flag = "SLC", Callback = function(c) S.SnapLineColor = c end})
+
+Combat:CreateSection("SETTINGS")
+Combat:CreateToggle({Name = "Team Check", CurrentValue = true, Flag = "TC", Callback = function(v) S.TeamCheck = v end})
+Combat:CreateToggle({Name = "Wall Check", CurrentValue = true, Flag = "WC", Callback = function(v) S.WallCheck = v end})
+Combat:CreateToggle({Name = "Hitbox Expander", CurrentValue = false, Flag = "HB", Callback = function(v) S.Hitbox = v end})
+Combat:CreateSlider({Name = "Hitbox Size", Range = {2, 20}, Increment = 1, CurrentValue = 5, Flag = "HBS", Callback = function(v) S.HitboxSize = v end})
+
+-- 3. PLAYER
+local PlayerTab = Window:CreateTab("Player", 4483345998)
+PlayerTab:CreateSection("MOVEMENT")
+PlayerTab:CreateToggle({Name = "Speed Hack", CurrentValue = false, Flag = "SH", Callback = function(v) S.SpeedHack = v end})
+PlayerTab:CreateSlider({Name = "Speed Value", Range = {16, 100}, Increment = 1, CurrentValue = 32, Flag = "SV", Callback = function(v) S.SpeedValue = v end})
+PlayerTab:CreateToggle({Name = "Jump Hack", CurrentValue = false, Flag = "JH", Callback = function(v) S.JumpHack = v end})
+PlayerTab:CreateSlider({Name = "Jump Value", Range = {50, 150}, Increment = 1, CurrentValue = 50, Flag = "JV", Callback = function(v) S.JumpValue = v end})
+PlayerTab:CreateToggle({Name = "Infinity Jump", CurrentValue = false, Flag = "IJ", Callback = function(v) S.InfJump = v end})
+PlayerTab:CreateToggle({Name = "No Clip", CurrentValue = false, Flag = "NC", Callback = function(v) S.NoClip = v end})
+
+-- 4. FARM
+local Farm = Window:CreateTab("Farm", 4483345998)
+Farm:CreateSection("KILL ALL")
+Farm:CreateToggle({Name = "Kill All (Auto Sweep)", CurrentValue = false, Flag = "KA", Callback = function(v) S.KillAllEnabled = v; if v then DebugWarn("KILL ALL ON!") end end})
+Farm:CreateSlider({Name = "Fire Rate Delay", Range = {0.01, 0.5}, Increment = 0.01, Suffix = "s", CurrentValue = 0.04, Flag = "KAD", Callback = function(v) _G.KillAllSettings.FireRateDelay = v end})
+Farm:CreateDropdown({Name = "Target Part", Options = {"Head", "HumanoidRootPart", "UpperTorso"}, CurrentOption = "Head", Flag = "KAT", Callback = function(v) _G.KillAllSettings.TargetPart = v end})
+
+Farm:CreateSection("BRING ENEMY")
+Farm:CreateToggle({Name = "Bring Enemy (Tarik Musuh)", CurrentValue = false, Flag = "BE", Callback = function(v) S.BringEnemy = v; if v then DebugWarn("Bring Enemy ON!") end end})
+Farm:CreateDropdown({Name = "Bring Type", Options = {"SingleEnemy", "AllEnemy"}, CurrentOption = "SingleEnemy", Flag = "BT", Callback = function(v) S.BringType = v end})
+Farm:CreateDropdown({Name = "Bring Target", Options = {"All", "PlayerEnemy", "BotEnemy"}, CurrentOption = "All", Flag = "BTG", Callback = function(v) S.BringTarget = v end})
+Farm:CreateSlider({Name = "Bring Studs (Jarak)", Range = {1, 50}, Increment = 1, CurrentValue = 5, Flag = "BS", Callback = function(v) S.BringStuds = v end})
+
+Rayfield:Notify({Title = "RENXX Hub v10.0", Content = "Semua fitur udah rapi!", Duration = 8, Image = 4483362458})
+DebugOK("RENXX HUB v10.0 | READY!")
