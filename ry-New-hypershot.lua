@@ -2,20 +2,6 @@
 --   RY ULTIMATE HYPERshot — v9.9 FINAL (SAFE MODE)
 --   By: ry-zeen | UI: Rayfield Gen 1 | Game: Hypershot
 --   
---   CHANGELOG v9.9:
---   ✅ ESP Position dropdown works
---   ✅ Box Type dropdown works (2D/3D/Corner)
---   ✅ ESP Size sliders works
---   ✅ Rapid Fire sampai 1000x
---   ✅ Bring Single FIX
---   ✅ Infinite Ammo → Refill mode (aman)
---   ✅ Ammo Value (0-10.000) + warning
---   ✅ Damage Value (100-500)
---   ✅ Lag optimasi
---   ❌ Removed: Anti Data Send (hook remote)
---   ❌ Removed: Remove Particle/Shadow/Effect (workspace)
---   ❌ Removed: Hitbox Expander (part size)
---   ❌ Removed: Spam Delay, Spam Target, Spinbot, Spin Speed, Unload
 -- ═══════════════════════════════════════════════════════════════
 
 local Players      = game:GetService("Players")
